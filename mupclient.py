@@ -2,13 +2,14 @@ import sys
 import os
 from PyQt4 import QtCore, QtGui, uic
 from PyQt4.QtGui import QFileDialog, QMessageBox
+from PyQt4.QtCore import QThread, SIGNAL
 
 import ftplib
 import ssl
 ftps = ftplib.FTP_TLS()
 import time
 
-fileType = ".zip"   # File extension to download.
+fileType = ".bsp"   # File extension to download.
 localDir =  ''   # Directory to place downloaded files.
 blockSize = 8192    # bytes
 qtCreatorFile = "mupclient.ui"  # UI schema
@@ -487,19 +488,68 @@ QCheckBox::indicator:disabled, QRadioButton::indicator:disabled
 
  
 Ui_MainWindow, QtBaseClass = uic.loadUiType(qtCreatorFile)
- 
+
+class retrieveThread(QThread):
+
+    def __init__(self, dpath): # all variables found in main thread need to be passed in here.
+        QThread.__init__(self)
+        self.dpath = dpath # Assign the passed in variables to the thread, so the thread functions can use them.
+
+    def __del(self):
+        self.wait()
+
+    def run(self):
+        print ("hey " + self.dpath)
+        #self.list_serverListing.clear()
+        self.emit(SIGNAL("clearText()")) # Add arguments to clearText after SIGNAL param
+        #localDir = str(self.line_downloadPath.text())
+        localDir = self.dpath
+        if ( (not localDir) or (not os.path.isdir(localDir)) ):
+            self.emit(SIGNAL("invalidPath()")) # Add arguments to clearText after SIGNAL param
+        else:
+            print ("continue")
+#        #    self.label_fileProgress.setText("Retrieving...")
+#            try:
+#                ftps.connect('0.0.0.0',47274)            
+#                ftps.login('user','12345')
+#                ftps.prot_p()
+#
+#                localFiles= os.listdir(localDir)
+#                remoteFiles=ftps.nlst()
+#                newFiles = set(remoteFiles) - set(localFiles)
+#                filteredFiles = [] 
+#                ftps.sendcmd("TYPE i")
+#                for f in newFiles:
+#                    if f.endswith(fileType):
+#                        filteredFiles.append(f)
+#        #                self.list_serverListing.addItem(self.formatSize(ftps.size(f)) + " " + f) # Needs to emit signal
+#            except (ftplib.all_errors) as e:
+#                self.emit(SIGNAL("invalidPath()")) # Add arguments to clearText after SIGNAL param
+#        #        QMessageBox.information(self, "FTP error", "[" + str(e.errno) + "]" + " " + str(e.strerror))
+#        #        self.label_fileProgress.setText("Could not retrieve listing")  # signal
+#                msg = "FTP error", "[" + str(e.errno) + "]" + " " + str(e.strerror)
+#                self.emit(SIGNAL("setProgressText(PyQt_PyObject)", msg)
+
+        #    self.label_fileProgress.setText("Done") # signal
+        #    self.emit(SIGNAL("setProgressText(text)", "Done")
+        #self.emit(SIGNAL("setProgressBar(value)"), 0)
+        #self.progressBar.setValue(0) # signal
+
+
 class MyApp(QtGui.QMainWindow, Ui_MainWindow):
     def __init__(self):
         QtGui.QMainWindow.__init__(self)
         Ui_MainWindow.__init__(self)
         self.setupUi(self)
         self.button_change.clicked.connect(self.changePath)
-        self.button_retrieve.clicked.connect(self.retrieveList)
+        #self.button_retrieve.clicked.connect(self.retrieveList)
+        self.button_retrieve.clicked.connect(self.retrieveListThread)
         self.button_download.clicked.connect(self.downloadList)
         self.button_cancel.clicked.connect(self.cancelDownload)
         self.list_serverListing.clicked.connect(self.updateSelected)
         self.progressBar.setValue(0)
 
+        
         # Open config file during startup to read contents.
         try:
             with open('mupdate.cfg', 'r') as cfg:
@@ -512,6 +562,30 @@ class MyApp(QtGui.QMainWindow, Ui_MainWindow):
         except (IOError) as e:
             QMessageBox.information(self, "IO error", str(e.errno) + " " + str(e.strerror))
 
+    def retrieveListThread(self):
+        self.rThread = retrieveThread(self.line_downloadPath.text()) # pass in variables needed to thread here.
+        self.connect(self.rThread, SIGNAL("clearText()"), self.clearText) # feed argument self 
+        self.connect(self.rThread, SIGNAL("invalidPath()"), self.invalidPath)
+        self.connect(self.rThread, SIGNAL("setProgressText(PyQt_PyObject)"), self.setProgressText)
+        #self.connect(self.rThread, SIGNAL("setProgressBar(PyQT_PyObject)"), self.setProgressBar)
+
+        self.rThread.start()
+
+
+    def clearText(self):
+        self.list_serverListing.clear()
+        print ("cleared")
+
+    def invalidPath(self):
+        QMessageBox.information(self, "Mupdate error", "Specify a valid download path")
+
+    def setProgressText(self, text):
+        self.label_fileProgress.setText(text)
+
+    def setProgressBar(self, value):
+        self.progressBar.setValue(value)
+
+    # Abbreviate the filesize in bytes to kB/MB/GB etc.
     def formatSize(self,size):
         if size < 1000:
             return (str(size)[:3] + "B")
@@ -525,9 +599,6 @@ class MyApp(QtGui.QMainWindow, Ui_MainWindow):
     def changePath(self):
         localDir = QFileDialog.getExistingDirectory()
         self.line_downloadPath.setText(localDir)
-        #self.line_downloadPath.setText(QFileDialog.getExistingDirectory())
-        #print (str(self.line_downloadPath.text()))
-        #cfg = open('mupdate.cfg', 'w')
         try:
             with open('mupdate.cfg', 'w') as cfg:
                 cfg.write(str(self.line_downloadPath.text()))
@@ -538,7 +609,6 @@ class MyApp(QtGui.QMainWindow, Ui_MainWindow):
     def retrieveList(self):
         self.list_serverListing.clear()
         localDir = str(self.line_downloadPath.text())
-        #print ("THIS IS A TEST", localDir)
         if ( (not localDir) or (not os.path.isdir(localDir)) ):
             QMessageBox.information(self, "Mupdate error", "Specify a valid download path")
         else:
@@ -549,85 +619,47 @@ class MyApp(QtGui.QMainWindow, Ui_MainWindow):
                 ftps.prot_p()
 
                 localFiles= os.listdir(localDir)
-#                print (localFiles)
                 remoteFiles=ftps.nlst()
-#                print (remoteFiles) 
                 newFiles = set(remoteFiles) - set(localFiles)
-#                print (newFiles) 
                 filteredFiles = [] 
                 ftps.sendcmd("TYPE i")
                 for f in newFiles:
                     if f.endswith(fileType):
                         filteredFiles.append(f)
-                        self.list_serverListing.addItem(self.formatSize(ftps.size(f)) + " " + f)
-                        #self.list_serverListing.addItem(str(ftps.size(f) / 1000) + " kB  " + f)
-                        #self.list_serverListing.addItem(f)
-                
-                #print (filteredFiles)
-                #self.list_serverListing.setSelectionMode(QAbstractItemView.ExtendedSelection)
-            #except (ftplib.error_reply) as e:
-            #    QMessageBox.information(self, "FTP error", "Unexpected reply from server")
-            #except (ftplib.error_temp) as e:
-            #    QMessageBox.information(self, "FTP error", "Temporary error code (400-499) from server")
-            #except (ftplib.error_perm) as e:
-            #    QMessageBox.information(self, "FTP error", "Permanent error code (500-599) from server")
-            #except (ftplib.error_proto) as e:
-            #    QMessageBox.information(self, "FTP error", "Non-conformant protocol response from server")
+                        self.list_serverListing.addItem(self.formatSize(ftps.size(f)) + " " + f) # Needs to emit signal
             except (ftplib.all_errors) as e:
                 QMessageBox.information(self, "FTP error", "[" + str(e.errno) + "]" + " " + str(e.strerror))
-                #QMessageBox.information(self, "FTP error", "Connection to server cannot be made")
-                self.label_fileProgress.setText("Could not retrieve listing")
-            self.label_fileProgress.setText("Done")
-        self.progressBar.setValue(0)
+                self.label_fileProgress.setText("Could not retrieve listing")  # signal
+            self.label_fileProgress.setText("Done") # signal
+        self.progressBar.setValue(0) # signal
 
     def updateSelected(self):
         self.label_fileProgress.setText(str(len(self.list_serverListing.selectedItems())) + " file(s) selected")
 
+    # Callback used to update the relevant UI elements as a file is being downloaded.
     def updateProgress(self, i, fname, fsize, block, downloadedFile, totalFileCount):
         downloadedFile.write(block)
         curSize = os.stat(fname).st_size
-        #self.label_fileProgress.setText("(" + str(i) + "/" + totalFileCount + ")" + " Downloading " + fname + " " + str(curSize) + "/" + str(fsize) + " B")
         self.label_fileProgress.setText("(" + str(i) + "/" + totalFileCount + ")" + " " + fname + " " + str(curSize) + "/" + str(fsize) + " B")
         self.progressBar.setValue(curSize / fsize * 100)
-        #print (str(len(block)) + " " + str(i))
-        #print ("(" + str(i) + "/" + totalFileCount + ")" + " Downloading " + fname + " " + str(curSize) + "/" + str(fsize) + " B " + str(curSize/fsize*100))
-        time.sleep(0.01)
+        time.sleep(0.01) #   <----------------------------------------remove this if testing on network
         
 
     def downloadList(self):
         i = 0
         totalFileCount = str(len(self.list_serverListing.selectedItems()))
-        #chunk = 100 / len(self.list_serverListing.selectedItems())
         localDir = str(self.line_downloadPath.text())
         currentDir = os.getcwd()
-        #print (localDir)
-        #print (currentDir)
         os.chdir(localDir)
         for files in self.list_serverListing.selectedItems():
             try:
-                #print ((str(files.text()))
                 ftps.sendcmd("TYPE i") # Turn on binary mode, needed for file size retrieval.
                 i = i + 1
-                fname = str(files.text())[5:]
+                fname = str(files.text())[5:] # Strip off first 5 characters as they show the file size.
                 fsize = ftps.size(fname)
-                #self.label_fileProgress.setText("(" + str(i) + "/" + totalFileCount + ")" + " Downloading " + f)
-                #self.progressBar.setValue(i * chunk)
                 downloadedFile = open(fname, 'wb')
                 ftps.retrbinary('RETR %s' % fname, lambda block: self.updateProgress(i, fname, fsize, block, downloadedFile, totalFileCount), blockSize)
-                #ftps.retrbinary('RETR %s' % fname, lambda block: self.updateProgress(i, fname, fsize, block, downloadedFile, totalFileCount))
-                #ftps.retrbinary('RETR %s' % f, open(f, 'wb').write)
-            #except (EOFError) as e:
-            #    QMessageBox.information(self, "EOF error", "Can't read any data")
-            #    continue
-            #except (ftplib.all_errors) as e:
-            #    QMessageBox.information(self, "FTP error", "[" + str(e.errno) + "]" + " " + str(e.strerror))
-            #    os.remove(fname)
-            #    continue
-            #except (IOError) as e:
-            #    QMessageBox.information(self, "IO error", str(e.errno) + " " + str(e.strerror))
-            #    continue
             except Exception as e:
-                #QMessageBox.information(self, "Error ", str(e) )
                 QMessageBox.information(self, "Error " , "Problem downloading the file: " + str(fname) + "\n\n" + str(e) )
                 try:
                     os.remove(fname) # Remove any partly downloaded files.
@@ -640,9 +672,9 @@ class MyApp(QtGui.QMainWindow, Ui_MainWindow):
         #self.retrieveList()
 
     def cancelDownload(self):
-        ftps.abort()
-
-
+        #ftps.abort()
+        #print ("canel")
+        pass
 
 
 if __name__ == "__main__":
